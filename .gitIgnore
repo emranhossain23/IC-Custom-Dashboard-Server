@@ -1,0 +1,4 @@
+# .gitIgnore
+.env
+firebaseServiceAccount.json
+node_modules

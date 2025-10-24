@@ -3,7 +3,7 @@ const app = express();
 require("dotenv").config();
 const cors = require("cors");
 const port = process.env.PORT || 5000;
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const admin = require("firebase-admin");
 const fs = require("fs");
 const nodemailer = require("nodemailer");
@@ -54,33 +54,51 @@ async function run() {
       res.send(result);
     });
 
-    // User creation route
-    app.post("/create-user", async (req, res) => {
+    // User creation + update
+    app.post("/user/onboard", async (req, res) => {
       const formData = req.body;
       const { email, name } = formData;
-
-      const tempPassword = Math.random().toString(36).slice(-10) + "A1#";
+      const query = { email: email };
 
       try {
-        const user = await admin.auth().createUser({
-          email,
-          password: tempPassword,
-          displayName: name,
-        });
+        const findUser = await usersCollection.findOne(query);
 
-        const resetLink = await admin.auth().generatePasswordResetLink(email, {
-          url: "http://localhost:5173/login",
-        });
+        if (!findUser) {
+          const tempPassword = Math.random().toString(36).slice(-10) + "A1#";
+          
+          const user = await admin.auth().createUser({
+            email,
+            password: tempPassword,
+            displayName: name,
+          });
 
-        await sendWelcomeEmail(email, name, tempPassword, resetLink);
-        const db_user = await usersCollection.insertOne(formData);
+          const resetLink = await admin
+            .auth()
+            .generatePasswordResetLink(email, {
+              url: "http://localhost:5173/login",
+            });
 
-        res.json({ success: true, user, resetLink, db_user });
+          await sendWelcomeEmail(email, name, tempPassword, resetLink);
+
+          const db_user = await usersCollection.insertOne({
+            ...formData,
+            createdAt: Date.now(),
+          });
+
+          return res.json({ success: true, user, resetLink, db_user });
+        } else {
+          const updateDoc = {
+            $set: { ...formData, updateAt: Date.now() },
+          };
+          const result = await usersCollection.updateOne(query, updateDoc);
+          res.json({ success: true, updated: true, result });
+        }
       } catch (error) {
         res.status(400).json({ error: error.message });
       }
     });
 
+    // send mail
     const sendWelcomeEmail = async (email, name, tempPassword, resetLink) => {
       const transporter = nodemailer.createTransport({
         host: "smtp.gmail.com",
@@ -108,6 +126,14 @@ async function run() {
 
       await transporter.sendMail(mailOptions);
     };
+
+    // delete user
+    app.delete("/delete-user/:id", async (req, res) => {
+      const { id } = req.params;
+      const filter = { _id: new ObjectId(id) };
+      const result = await usersCollection.deleteOne(filter);
+      res.send(result);
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
