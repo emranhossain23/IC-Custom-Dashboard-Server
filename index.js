@@ -12,7 +12,11 @@ const jwt = require("jsonwebtoken");
 const axios = require("axios");
 
 const corsOptions = {
-  origin: ["http://localhost:5173", "http://localhost:5174"],
+  origin: [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "https://dental-implant-machine-5977.vercel.app",
+  ],
   credentials: true,
   optionSuccessStatus: 200,
 };
