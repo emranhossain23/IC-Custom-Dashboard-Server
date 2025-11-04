@@ -9,13 +9,18 @@ const fs = require("fs");
 const nodemailer = require("nodemailer");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
-
 const axios = require("axios");
 
 const corsOptions = {
   origin: ["http://localhost:5173", "http://localhost:5174"],
   credentials: true,
   optionSuccessStatus: 200,
+};
+
+const cookieOptions = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
 };
 
 // Service account credentials load
@@ -50,11 +55,55 @@ async function run() {
     const db = client.db("DentalImplant");
     const usersCollection = db.collection("users");
     const rolesCollection = db.collection("roles");
+    const clinicCollection = db.collection("clinics");
+
+    // verification
+    const verifyToken = async (req, res, next) => {
+      const token = req.cookies?.token;
+      // console.log(token)
+
+      if (!token) {
+        return res.status(401).send({ message: "unauthorized access" });
+      }
+      jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+        if (err) {
+          console.log(err);
+          return res.status(401).send({ message: "unauthorized access" });
+        }
+        req.user = decoded;
+        // console.log('in verify',req.user);
+        next();
+      });
+    };
+
+    // verify admin
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.user;
+      const query = { email: email };
+      const user = await usersCollection.findOne(query);
+      const isAdmin = user?.role === "Admin";
+      if (!isAdmin) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      next();
+    };
+
+    // creating Token
+    app.post("/jwt", async (req, res) => {
+      const user = req.body.email;
+      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET);
+
+      res.cookie("token", token, cookieOptions).send({ success: true, token });
+    });
+
+    // clear cookie
+    app.post("/logout", async (req, res) => {
+      res.clearCookie("token", cookieOptions).send({ success: true });
+    });
 
     // -------- user -------
-
-    // user
-    app.get("/users", async (req, res) => {
+    // users
+    app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
       //   const { searchText } = req.query;
       //   const regex = new RegExp(searchText, "i");
 
@@ -66,8 +115,15 @@ async function run() {
       res.send(result);
     });
 
+    // single user
+    app.get("/user/:email", async (req, res) => {
+      const { email } = req.params;
+      const result = await usersCollection.findOne({ email: email });
+      res.send(result);
+    });
+
     // User creation + update
-    app.post("/user/onboard", async (req, res) => {
+    app.post("/user/onboard", verifyToken, verifyAdmin, async (req, res) => {
       const formData = req.body;
       const { email, name } = formData;
       const query = { email: email };
@@ -140,7 +196,7 @@ async function run() {
     };
 
     // update user
-    app.patch("/update-user", async (req, res) => {
+    app.patch("/update-user", verifyToken, verifyAdmin, async (req, res) => {
       const { email, selectedClients } = req.body;
       const filter = { email: email };
       const updateDoc = {
@@ -154,15 +210,20 @@ async function run() {
     });
 
     // delete user
-    app.delete("/delete-user/:id", async (req, res) => {
-      const { id } = req.params;
-      const filter = { _id: new ObjectId(id) };
-      const result = await usersCollection.deleteOne(filter);
-      res.send(result);
-    });
+    app.delete(
+      "/delete-user/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { id } = req.params;
+        const filter = { _id: new ObjectId(id) };
+        const result = await usersCollection.deleteOne(filter);
+        res.send(result);
+      }
+    );
 
     // remove user client
-    app.delete("/remove-client", async (req, res) => {
+    app.delete("/remove-client", verifyToken, verifyAdmin, async (req, res) => {
       const { id, user_id } = req.body;
 
       const result = await usersCollection.updateOne(
@@ -173,12 +234,12 @@ async function run() {
     });
 
     // roles
-    app.get("/roles", async (req, res) => {
+    app.get("/roles", verifyToken, verifyAdmin, async (req, res) => {
       const result = await rolesCollection.find().toArray();
       res.send(result);
     });
 
-    app.patch("/create-role", async (req, res) => {
+    app.patch("/create-role", verifyToken, verifyAdmin, async (req, res) => {
       const info = req.body;
       const { id } = req.query;
 
@@ -197,30 +258,34 @@ async function run() {
     });
 
     // delete role
-    app.delete("/delete-role/:id", async (req, res) => {
-      const { id } = req.params;
-      const result = await rolesCollection.deleteOne({ _id: new ObjectId(id) });
+    app.delete(
+      "/delete-role/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { id } = req.params;
+        const result = await rolesCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+        res.send(result);
+      }
+    );
+
+    // get clinics
+    app.get("/clinics", async (req, res) => {
+      const result = await clinicCollection.find().toArray();
       res.send(result);
     });
 
-    // let config = {
-    //   method: "get",
-    //   maxBodyLength: Infinity,
-    //   url: "https://services.leadconnectorhq.com/opportunities/search",
-    //   headers: {
-    //     Accept: "application/json",
-    //     Authorization: "pit-952e1d8e-3016-4eaf-a45a-f4bda3a2b7cc",
-    //   },
-    // };
-
-    // axios
-    //   .request(config)
-    //   .then((response) => {
-    //     console.log(JSON.stringify(response.data));
-    //   })
-    //   .catch((error) => {
-    //     console.log(error);
-    //   });
+    // add clinic
+    app.post("/add-clinic", async (req, res) => {
+      const info = req.body;
+      const result = await clinicCollection.insertOne({
+        ...info,
+        createdAt: new Date(),
+      });
+      res.send(result);
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
@@ -241,39 +306,3 @@ app.get("/", (req, res) => {
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
-
-// const express = require("express");
-// const cors = require("cors");
-// const connectDB = require("./config/db");
-
-// const app = express();
-
-// // Middleware
-// app.use(cors());
-// app.use(express.json());
-
-// // Connect to DB
-// let db;
-// connectDB().then((database) => {
-//   db = database;
-// });
-
-// // Routes
-// app.get("/", (req, res) => {
-//   res.send("Server is running");
-// });
-
-// // user
-// app.get("/users", async (req, res) => {
-//   try {
-//     const users = await db.collection("users").find({}).toArray();
-//     res.json(users);
-//   } catch (err) {
-//     res.status(500).json({ error: err.message });
-//   }
-// });
-
-// app.post("/user")
-
-// const PORT = process.env.PORT || 5000;
-// app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
