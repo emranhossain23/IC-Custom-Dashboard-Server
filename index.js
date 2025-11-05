@@ -227,7 +227,12 @@ async function run() {
       verifyAdmin,
       async (req, res) => {
         const { id } = req.params;
+        const { email } = req.body;
         const filter = { _id: new ObjectId(id) };
+
+        const user = await admin.auth().getUserByEmail(email);
+        await admin.auth().deleteUser(user.uid);
+
         const result = await usersCollection.deleteOne(filter);
         res.send(result);
       }
@@ -296,6 +301,47 @@ async function run() {
         createdAt: new Date(),
       });
       res.send(result);
+    });
+
+    // PATCH /api/clinics/:id - single clinic
+    app.patch("/clinics/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { selected } = req.body;
+
+        const result = await clinicCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { selected } }
+        );
+
+        if (result.modifiedCount === 0)
+          return res.status(404).json({ message: "Clinic not found" });
+
+        res.json({ message: "Clinic updated successfully" });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+
+    // PATCH /api/clinics/select-all - bulk select/deselect
+    app.patch("/clinics/select-all", async (req, res) => {
+      try {
+        const { selected } = req.body;
+
+        const result = await clinicCollection.updateMany(
+          {},
+          { $set: { selected } }
+        );
+
+        res.json({
+          message: selected ? "All clinics selected" : "All clinics deselected",
+          modifiedCount: result.modifiedCount,
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Internal Server Error" });
+      }
     });
 
     // Send a ping to confirm a successful connection
