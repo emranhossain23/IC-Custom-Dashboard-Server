@@ -15,7 +15,7 @@ const corsOptions = {
   origin: [
     "http://localhost:5173",
     "http://localhost:5174",
-    // "https://dental-implant-machine-5977.vercel.app",
+    "https://dental-implant-machine-5977.vercel.app",
   ],
   credentials: true,
   optionSuccessStatus: 200,
@@ -33,8 +33,15 @@ const serviceAccount = JSON.parse(
 );
 
 // Initialize Firebase Admin
+// admin.initializeApp({
+//   credential: admin.credential.cert(serviceAccount),
+// });
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
+  credential: admin.credential.cert({
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+  }),
 });
 
 //middleware
