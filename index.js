@@ -5,10 +5,10 @@ const cors = require("cors");
 const port = process.env.PORT || 5000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const admin = require("firebase-admin");
-const fs = require("fs");
 const nodemailer = require("nodemailer");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
+const fs = require("fs");
 const axios = require("axios");
 
 const corsOptions = {
@@ -28,9 +28,9 @@ const cookieOptions = {
 };
 
 // Service account credentials load
-const serviceAccount = JSON.parse(
-  fs.readFileSync("./firebaseServiceAccount.json", "utf8")
-);
+// const serviceAccount = JSON.parse(
+//   fs.readFileSync("./firebaseServiceAccount.json", "utf8")
+// );
 
 // Initialize Firebase Admin
 // admin.initializeApp({
