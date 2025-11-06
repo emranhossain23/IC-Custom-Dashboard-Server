@@ -91,13 +91,6 @@ async function run() {
     };
 
     // creating Token
-    // app.post("/jwt", async (req, res) => {
-    //   const user = req.body.email;
-    //   const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET)
-
-    //   res.cookie("token", token, cookieOptions).send({ success: true, token });
-    // });
-
     app.post("/jwt", async (req, res) => {
       const user = req.body;
 
@@ -157,7 +150,7 @@ async function run() {
           const resetLink = await admin
             .auth()
             .generatePasswordResetLink(email, {
-              url: "http://localhost:5173/login",
+              url: "https://dental-implant-machine-5977.vercel.app",
             });
 
           await sendWelcomeEmail(email, name, tempPassword, resetLink);
