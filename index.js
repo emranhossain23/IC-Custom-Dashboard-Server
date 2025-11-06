@@ -16,6 +16,7 @@ const corsOptions = {
     "http://localhost:5173",
     "http://localhost:5174",
     "https://dental-implant-machine-5977.vercel.app",
+    "https://dental-implant-machine-server-cgfs.vercel.app",
   ],
   credentials: true,
   optionSuccessStatus: 200,
@@ -27,15 +28,6 @@ const cookieOptions = {
   sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
 };
 
-// Service account credentials load
-// const serviceAccount = JSON.parse(
-//   fs.readFileSync("./firebaseServiceAccount.json", "utf8")
-// );
-
-// Initialize Firebase Admin
-// admin.initializeApp({
-//   credential: admin.credential.cert(serviceAccount),
-// });
 admin.initializeApp({
   credential: admin.credential.cert({
     projectId: process.env.FIREBASE_PROJECT_ID,
@@ -100,9 +92,18 @@ async function run() {
     };
 
     // creating Token
+    // app.post("/jwt", async (req, res) => {
+    //   const user = req.body.email;
+    //   const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET)
+
+    //   res.cookie("token", token, cookieOptions).send({ success: true, token });
+    // });
+
     app.post("/jwt", async (req, res) => {
-      const user = req.body.email;
-      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET);
+      const user = req.body;
+      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
+        expiresIn: "1h",
+      });
 
       res.cookie("token", token, cookieOptions).send({ success: true, token });
     });
@@ -303,7 +304,7 @@ async function run() {
       res.send(result);
     });
 
-    // PATCH /api/clinics/:id - single clinic
+    // PATCH single clinic
     app.patch("/clinics/:id", async (req, res) => {
       try {
         const id = req.params.id;
@@ -324,7 +325,7 @@ async function run() {
       }
     });
 
-    // PATCH /api/clinics/select-all - bulk select/deselect
+    // PATCH clinics select-all
     app.patch("/clinics/select-all", async (req, res) => {
       try {
         const { selected } = req.body;
