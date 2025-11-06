@@ -8,8 +8,7 @@ const admin = require("firebase-admin");
 const nodemailer = require("nodemailer");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
-const fs = require("fs");
-const axios = require("axios");
+
 
 const corsOptions = {
   origin: [
@@ -81,7 +80,7 @@ async function run() {
 
     // verify admin
     const verifyAdmin = async (req, res, next) => {
-      const email = req.user;
+      const email = req.user.email;
       const query = { email: email };
       const user = await usersCollection.findOne(query);
       const isAdmin = user?.role === "Admin";
@@ -101,9 +100,12 @@ async function run() {
 
     app.post("/jwt", async (req, res) => {
       const user = req.body;
-      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
-        expiresIn: "1h",
-      });
+
+      const token = jwt.sign(
+        { email: user.email },
+        process.env.ACCESS_TOKEN_SECRET,
+        { expiresIn: "1h" }
+      );
 
       res.cookie("token", token, cookieOptions).send({ success: true, token });
     });
