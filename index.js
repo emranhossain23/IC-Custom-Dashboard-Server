@@ -9,7 +9,6 @@ const nodemailer = require("nodemailer");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
 
-
 const corsOptions = {
   origin: [
     "http://localhost:5173",
@@ -284,61 +283,84 @@ async function run() {
     );
 
     // get clinics
-    app.get("/clinics", async (req, res) => {
+    app.get("/clinics", verifyToken, verifyAdmin, async (req, res) => {
       const result = await clinicCollection.find().toArray();
       res.send(result);
     });
 
     // add clinic
-    app.post("/add-clinic", async (req, res) => {
+    app.patch("/add-clinic", verifyToken, verifyAdmin, async (req, res) => {
       const info = req.body;
-      const result = await clinicCollection.insertOne({
-        ...info,
-        createdAt: new Date(),
-      });
+      const { id } = req.query;
+
+      const query =
+        id && id !== "undefined"
+          ? { _id: new ObjectId(id) }
+          : { email: info.email };
+
+      delete info?._id;
+
+      const doc = { $set: { ...info, createdAt: new Date() } };
+      const option = { upsert: true };
+
+      const result = await clinicCollection.updateOne(query, doc, option);
       res.send(result);
     });
 
-    // PATCH single clinic
-    app.patch("/clinics/:id", async (req, res) => {
-      try {
-        const id = req.params.id;
-        const { selected } = req.body;
+    // delete clinic
+    app.delete(
+      "/delete-clinic/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { id } = req.params;
+        const filter = { _id: new ObjectId(id) };
 
-        const result = await clinicCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { selected } }
-        );
-
-        if (result.modifiedCount === 0)
-          return res.status(404).json({ message: "Clinic not found" });
-
-        res.json({ message: "Clinic updated successfully" });
-      } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Internal Server Error" });
+        const result = await clinicCollection.deleteOne(filter);
+        res.send(result);
       }
-    });
+    );
+
+    // PATCH single clinic
+    // app.patch("/clinics/:id", async (req, res) => {
+    //   try {
+    //     const id = req.params.id;
+    //     const { selected } = req.body;
+
+    //     const result = await clinicCollection.updateOne(
+    //       { _id: new ObjectId(id) },
+    //       { $set: { selected } }
+    //     );
+
+    //     if (result.modifiedCount === 0)
+    //       return res.status(404).json({ message: "Clinic not found" });
+
+    //     res.json({ message: "Clinic updated successfully" });
+    //   } catch (err) {
+    //     console.error(err);
+    //     res.status(500).json({ error: "Internal Server Error" });
+    //   }
+    // });
 
     // PATCH clinics select-all
-    app.patch("/clinics/select-all", async (req, res) => {
-      try {
-        const { selected } = req.body;
+    // app.patch("/clinics/select-all", async (req, res) => {
+    //   try {
+    //     const { selected } = req.body;
 
-        const result = await clinicCollection.updateMany(
-          {},
-          { $set: { selected } }
-        );
+    //     const result = await clinicCollection.updateMany(
+    //       {},
+    //       { $set: { selected } }
+    //     );
 
-        res.json({
-          message: selected ? "All clinics selected" : "All clinics deselected",
-          modifiedCount: result.modifiedCount,
-        });
-      } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Internal Server Error" });
-      }
-    });
+    //     res.json({
+    //       message: selected ? "All clinics selected" : "All clinics deselected",
+    //       modifiedCount: result.modifiedCount,
+    //     });
+    //   } catch (err) {
+    //     console.error(err);
+    //     res.status(500).json({ error: "Internal Server Error" });
+    //   }
+    // });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
