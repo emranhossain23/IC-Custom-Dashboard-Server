@@ -57,6 +57,7 @@ async function run() {
     const usersCollection = db.collection("users");
     const rolesCollection = db.collection("roles");
     const clinicCollection = db.collection("clinics");
+    const urlReportCollection = db.collection("urlReport");
 
     // verification
     const verifyToken = async (req, res, next) => {
@@ -317,6 +318,45 @@ async function run() {
         const filter = { _id: new ObjectId(id) };
 
         const result = await clinicCollection.deleteOne(filter);
+        res.send(result);
+      }
+    );
+
+    // get report url
+    app.get("/all-url", verifyToken, verifyAdmin, async (req, res) => {
+      const result = await urlReportCollection.find().toArray();
+      res.send(result);
+    });
+
+    // add report url
+    app.patch("/add-url", verifyToken, verifyAdmin, async (req, res) => {
+      const info = req.body;
+      const { id } = req.query;
+
+      const query =
+        id && id !== "undefined"
+          ? { _id: new ObjectId(id) }
+          : { email: info.email };
+
+      delete info?._id;
+
+      const doc = { $set: { ...info, createdAt: new Date() } };
+      const option = { upsert: true };
+
+      const result = await urlReportCollection.updateOne(query, doc, option);
+      res.send(result);
+    });
+
+    // delete report url
+    app.delete(
+      "/delete-url/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { id } = req.params;
+        const filter = { _id: new ObjectId(id) };
+
+        const result = await urlReportCollection.deleteOne(filter);
         res.send(result);
       }
     );
