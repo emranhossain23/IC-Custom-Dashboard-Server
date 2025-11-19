@@ -9,6 +9,10 @@ const nodemailer = require("nodemailer");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
 
+const bodyParser = require("body-parser");
+const { Configuration, PlaidApi, PlaidEnvironments } = require("plaid");
+const Stripe = require("stripe");
+
 const corsOptions = {
   origin: [
     "http://localhost:5173",
@@ -38,6 +42,8 @@ admin.initializeApp({
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(cookieParser());
+
+app.use(bodyParser.json());
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.wezoknx.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -361,46 +367,151 @@ async function run() {
       }
     );
 
-    // PATCH single clinic
-    // app.patch("/clinics/:id", async (req, res) => {
-    //   try {
-    //     const id = req.params.id;
-    //     const { selected } = req.body;
+    // init Plaid client (v10+ style)
+    const configuration = new Configuration({
+      basePath: PlaidEnvironments[process.env.PLAID_ENV || "sandbox"],
+      baseOptions: {
+        headers: {
+          "PLAID-CLIENT-ID": process.env.PLAID_CLIENT_ID,
+          "PLAID-SECRET": process.env.PLAID_SECRET,
+        },
+      },
+    });
+    const plaidClient = new PlaidApi(configuration);
 
-    //     const result = await clinicCollection.updateOne(
-    //       { _id: new ObjectId(id) },
-    //       { $set: { selected } }
-    //     );
+    // init Stripe
+    const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
-    //     if (result.modifiedCount === 0)
-    //       return res.status(404).json({ message: "Clinic not found" });
+    // --- 1) Create link token (frontend calls this to start Plaid Link) ---
+    app.post("/api/create-link-token", async (req, res) => {
+      try {
+        // user_id should be unique per user in your system
+        const userId = req.body.userId || "unique-user-id-123";
 
-    //     res.json({ message: "Clinic updated successfully" });
-    //   } catch (err) {
-    //     console.error(err);
-    //     res.status(500).json({ error: "Internal Server Error" });
-    //   }
-    // });
+        const response = await plaidClient.linkTokenCreate({
+          user: { client_user_id: userId },
+          client_name: "Your App Name",
+          products: ["auth"], // auth is enough for bank account routing info
+          country_codes: ["US"],
+          language: "en",
+        });
 
-    // PATCH clinics select-all
-    // app.patch("/clinics/select-all", async (req, res) => {
-    //   try {
-    //     const { selected } = req.body;
+        res.json(response.data);
+      } catch (err) {
+        console.error(
+          "create-link-token error:",
+          err.response ? err.response.data : err
+        );
+        res.status(500).json({ error: "link token creation failed" });
+      }
+    });
 
-    //     const result = await clinicCollection.updateMany(
-    //       {},
-    //       { $set: { selected } }
-    //     );
+    // --- 2) Exchange public_token for access_token ---
+    app.post("/api/exchange-public-token", async (req, res) => {
+      try {
+        const { public_token } = req.body;
+        const exchangeResponse = await plaidClient.itemPublicTokenExchange({
+          public_token,
+        });
+        const access_token = exchangeResponse.data.access_token;
+        const item_id = exchangeResponse.data.item_id;
 
-    //     res.json({
-    //       message: selected ? "All clinics selected" : "All clinics deselected",
-    //       modifiedCount: result.modifiedCount,
-    //     });
-    //   } catch (err) {
-    //     console.error(err);
-    //     res.status(500).json({ error: "Internal Server Error" });
-    //   }
-    // });
+        // Optionally store access_token & item_id in DB mapped to your user
+
+        res.json({ access_token, item_id });
+      } catch (err) {
+        console.error(
+          "exchange-public-token error:",
+          err.response ? err.response.data : err
+        );
+        res.status(500).json({ error: "public token exchange failed" });
+      }
+    });
+
+    // --- 3) Create a Stripe bank account token via Plaid processor (Plaid -> Stripe) ---
+    // This step returns a Stripe bank_account_token (one-time use) which you send to Stripe to attach a bank account
+    app.post("/api/create-stripe-bank-account-token", async (req, res) => {
+      try {
+        const { access_token, account_id } = req.body;
+        // NOTE: method name depends on Plaid SDK version; this is the typical call
+        // For Plaid v10+, use processorTokenCreate with processor: 'stripe'
+        const plaidResp = await plaidClient.processorTokenCreate({
+          access_token,
+          account_id,
+          processor: "stripe",
+        });
+        // plaidResp.data.processor_token is the Stripe bank account token (e.g., btok_xxx)
+        const processor_token = plaidResp.data.processor_token;
+
+        res.json({ processor_token });
+      } catch (err) {
+        console.error(
+          "create-stripe-bank-account-token error:",
+          err.response ? err.response.data : err
+        );
+        res
+          .status(500)
+          .json({ error: "failed to create stripe bank account token" });
+      }
+    });
+
+    // --- 4) Create Stripe customer and attach bank account using the processor_token ---
+    app.post("/api/create-stripe-customer-with-bank", async (req, res) => {
+      try {
+        const { email, name, processor_token } = req.body;
+
+        // Create a Stripe customer
+        const customer = await stripe.customers.create({
+          email,
+          name,
+        });
+
+        // Attach bank account using the processor token (one-time token from Plaid)
+        // For older Stripe API: stripe.customers.createSource(customer.id, { source: processor_token })
+        // For newer API: create a bank_account PaymentMethod or use sources as below:
+        const bankAccount = await stripe.customers.createSource(customer.id, {
+          source: processor_token,
+        });
+
+        // Optionally set the default source
+        await stripe.customers.update(customer.id, {
+          invoice_settings: { default_payment_method: null },
+        });
+
+        // Save customer.id and bankAccount.id in DB associated with the user
+
+        res.json({ success: true, customer, bankAccount });
+      } catch (err) {
+        console.error("create-stripe-customer-with-bank error:", err);
+        // If err.raw exists, it may contain Stripe details
+        res
+          .status(500)
+          .json({ error: "failed to create stripe customer or attach bank" });
+      }
+    });
+
+    // --- 5) (Optional) Create an ACH charge (one-off) via Customer default source or via PaymentIntent (Stripe guidance varies) ---
+    // Note: For ACH debits, Stripe's recommended flow may involve PaymentIntents with US bank debits or charges via 'sources'.
+    // Implement per your Stripe account settings and ACH capabilities. This endpoint is illustrative.
+    app.post("/api/create-ach-charge", async (req, res) => {
+      try {
+        const { customerId, amount, currency = "usd", description } = req.body;
+
+        // One approach (older): create a charge using customer and source id
+        const charge = await stripe.charges.create({
+          amount,
+          currency,
+          customer: customerId,
+          // source: bankAccountSourceId, // if needed
+          description,
+        });
+
+        res.json({ charge });
+      } catch (err) {
+        console.error("create-ach-charge error:", err);
+        res.status(500).json({ error: "ACH charge failed" });
+      }
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
