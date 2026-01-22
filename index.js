@@ -8,6 +8,8 @@ const admin = require("firebase-admin");
 const nodemailer = require("nodemailer");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
+const cron = require("node-cron");
+const axios = require("axios");
 
 const corsOptions = {
   origin: [
@@ -58,6 +60,14 @@ async function run() {
     const rolesCollection = db.collection("roles");
     const clinicCollection = db.collection("clinics");
     const urlReportCollection = db.collection("urlReport");
+    const opportunitiesCollection = db.collection("opportunities");
+    const messagesCollection = db.collection("messages");
+
+    // opportunitiesCollection indexing
+    await opportunitiesCollection.createIndex({ remoteId: 1, clinicId: 1 });
+
+    // messagesCollection indexing
+    await messagesCollection.createIndex({ remoteId: 1, clinicId: 1 });
 
     // verification
     const verifyToken = async (req, res, next) => {
@@ -97,7 +107,7 @@ async function run() {
       const token = jwt.sign(
         { email: user.email },
         process.env.ACCESS_TOKEN_SECRET,
-        { expiresIn: "1h" }
+        { expiresIn: "1h" },
       );
 
       res.cookie("token", token, cookieOptions).send({ success: true, token });
@@ -231,7 +241,7 @@ async function run() {
 
         const result = await usersCollection.deleteOne(filter);
         res.send(result);
-      }
+      },
     );
 
     // remove user client
@@ -240,7 +250,7 @@ async function run() {
 
       const result = await usersCollection.updateOne(
         { _id: new ObjectId(user_id) },
-        { $pull: { selectedClients: { id: id } } }
+        { $pull: { selectedClients: { id: id } } },
       );
       res.send(result);
     });
@@ -280,7 +290,7 @@ async function run() {
           _id: new ObjectId(id),
         });
         res.send(result);
-      }
+      },
     );
 
     // get clinics
@@ -288,6 +298,25 @@ async function run() {
       const result = await clinicCollection.find().toArray();
       res.send(result);
     });
+
+    // add clinic
+    // app.patch("/add-clinic", verifyToken, verifyAdmin, async (req, res) => {
+    //   const info = req.body;
+    //   const { id } = req.query;
+
+    //   const query =
+    //     id && id !== "undefined"
+    //       ? { _id: new ObjectId(id) }
+    //       : { email: info.email };
+
+    //   delete info?._id;
+
+    //   const doc = { $set: { ...info, createdAt: new Date() } };
+    //   const option = { upsert: true };
+
+    //   const result = await clinicCollection.updateOne(query, doc, option);
+    //   res.send(result);
+    // });
 
     // add clinic
     app.patch("/add-clinic", verifyToken, verifyAdmin, async (req, res) => {
@@ -300,12 +329,61 @@ async function run() {
           : { email: info.email };
 
       delete info?._id;
+      delete info?.createdAt;
+      delete info?.selected;
 
-      const doc = { $set: { ...info, createdAt: new Date() } };
+      const doc = {
+        $set: {
+          ...info,
+          updatedAt: new Date(),
+        },
+        $setOnInsert: {
+          selected: true,
+          createdAt: new Date(),
+        },
+      };
+
       const option = { upsert: true };
 
       const result = await clinicCollection.updateOne(query, doc, option);
       res.send(result);
+    });
+
+    app.patch("/clinic/select", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const { clinicId, selected } = req.body;
+        console.log(clinicId, selected);
+
+        if (!clinicId || typeof selected !== "boolean") {
+          return res.status(400).send({
+            message: "clinicId and selected(boolean) are required",
+          });
+        }
+
+        const result = await clinicCollection.updateOne(
+          { _id: new ObjectId(clinicId) },
+          {
+            $set: {
+              selected,
+              updatedAt: new Date(),
+            },
+          },
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Clinic not found" });
+        }
+
+        res.send({
+          success: true,
+          modifiedCount: result.modifiedCount,
+        });
+      } catch (error) {
+        res.status(500).send({
+          message: "Failed to update clinic selection",
+          error: error.message,
+        });
+      }
     });
 
     // delete clinic
@@ -319,7 +397,7 @@ async function run() {
 
         const result = await clinicCollection.deleteOne(filter);
         res.send(result);
-      }
+      },
     );
 
     // get report url
@@ -358,13 +436,482 @@ async function run() {
 
         const result = await urlReportCollection.deleteOne(filter);
         res.send(result);
-      }
+      },
     );
+
+    // Opportunities
+    async function fetchOpportunities(clinic) {
+      let all = [];
+      let page = 1;
+
+      while (true) {
+        const res = await axios.get(
+          "https://services.leadconnectorhq.com/opportunities/search",
+          {
+            params: {
+              location_id: clinic.location_id,
+              limit: 100,
+              page,
+            },
+            headers: {
+              Authorization: `Bearer ${clinic.authorization}`,
+              Version: "2021-07-28",
+            },
+          },
+        );
+
+        const data = res.data.opportunities || [];
+        all.push(...data);
+
+        if (data.length < 100) break;
+        page++;
+      }
+
+      return all;
+    }
+
+    // Messages
+    async function fetchMessages(clinic) {
+      let all = [];
+      let cursor = null;
+
+      do {
+        const params = {
+          locationId: clinic.location_id,
+          limit: 100,
+        };
+        if (clinic.lastSyncAt)
+          params.startAfter = clinic.lastSyncAt.toISOString();
+        if (cursor) params.cursor = cursor;
+
+        const res = await axios.get(
+          "https://services.leadconnectorhq.com/conversations/messages/export",
+          {
+            params,
+            headers: {
+              Authorization: `Bearer ${clinic.authorization}`,
+              Version: "2021-07-28",
+            },
+          },
+        );
+
+        all.push(...(res.data.messages || []));
+        cursor = res.data.nextCursor || null;
+      } while (cursor);
+
+      return all;
+    }
+
+    // cron.schedule("0 */6 * * *", async () => {
+    //   // cron.schedule("*/1 * * * *", async () => {
+    //   console.log("Multi-clinic sync started");
+
+    //   const clinics = await db
+    //     .collection("clinics")
+    //     .find({ selected: true })
+    //     .toArray();
+
+    //   for (const clinic of clinics) {
+    //     try {
+    //       console.log(`Syncing ${clinic.name}`);
+
+    //       const opportunities = await fetchOpportunities(clinic);
+    //       const messages = await fetchMessages(clinic);
+
+    //       // Clear old clinic data
+    //       await db.collection("opportunities").deleteMany({
+    //         clinicId: new ObjectId(clinic._id),
+    //       });
+
+    //       await db.collection("messages").deleteMany({
+    //         clinicId: new ObjectId(clinic._id),
+    //       });
+
+    //       // Insert new
+    //       if (opportunities.length) {
+    //         await db.collection("opportunities").insertMany(
+    //           opportunities.map((o) => ({
+    //             clinicId: clinic._id,
+    //             contactId: o.contactId,
+    //             pipelineId: o.pipelineId,
+    //             pipelineStageId: o.pipelineStageId,
+    //             createdAt: new Date(o.createdAt),
+    //           })),
+    //         );
+    //       }
+
+    //       if (messages.length) {
+    //         await db.collection("messages").insertMany(
+    //           messages.map((m) => ({
+    //             clinicId: clinic._id,
+    //             contactId: m.contactId,
+    //             direction: m.direction,
+    //             messageType: m.messageType,
+    //             status: m.status,
+    //             dateAdded: new Date(m.dateAdded),
+    //           })),
+    //         );
+    //       }
+
+    //       // Update sync time
+    //       await db
+    //         .collection("clinics")
+    //         .updateOne(
+    //           { _id: clinic._id },
+    //           { $set: { lastSyncAt: new Date() } },
+    //         );
+
+    //       console.log(`Done ${clinic.name}`);
+    //     } catch (err) {
+    //       console.error(`Failed ${clinic.name}`, err.message);
+    //     }
+    //   }
+
+    //   console.log("🏁 Multi-clinic sync finished");
+    // });
+
+    cron.schedule("*/10 * * * *", async () => {
+      console.log("🔄 Multi-clinic sync started");
+
+      const clinics = await db
+        .collection("clinics")
+        .find({ selected: true })
+        .toArray();
+
+      for (const clinic of clinics) {
+        try {
+          console.log(`➡️ Syncing ${clinic.name}`);
+
+          const [opportunities, messages] = await Promise.all([
+            fetchOpportunities(clinic),
+            fetchMessages(clinic),
+          ]);
+
+          if (opportunities.length > 0) {
+            const oppOps = opportunities.map((o) => ({
+              updateOne: {
+                filter: { remoteId: o.id, clinicId: clinic._id },
+                update: {
+                  $set: {
+                    clinicId: clinic._id,
+                    remoteId: o.id,
+                    contactId: o.contactId,
+                    pipelineId: o.pipelineId,
+                    pipelineStageId: o.pipelineStageId,
+                    createdAt: new Date(o.createdAt),
+                    // name: o.name,
+                    // status: o.status,
+                    // updatedAt: new Date(o.updatedAt),
+                  },
+                },
+                upsert: true,
+              },
+            }));
+            await db.collection("opportunities").bulkWrite(oppOps);
+          }
+
+          if (messages.length > 0) {
+            const msgOps = messages.map((m) => ({
+              updateOne: {
+                filter: { remoteId: m.id, clinicId: clinic._id },
+                update: {
+                  $set: {
+                    clinicId: clinic._id,
+                    contactId: m.contactId,
+                    direction: m.direction,
+                    messageType: m.messageType,
+                    dateAdded: new Date(m.dateAdded),
+                    status: m.status,
+                    remoteId: m.id,
+
+                    // conversationId: m.conversationId,
+                  },
+                },
+                upsert: true,
+              },
+            }));
+            await db.collection("messages").bulkWrite(msgOps);
+          }
+
+          await db
+            .collection("clinics")
+            .updateOne(
+              { _id: clinic._id },
+              { $set: { lastSyncAt: new Date() } },
+            );
+
+          console.log(
+            `✅ Done ${clinic.name}: ${opportunities.length} Opps, ${messages.length} Msgs`,
+          );
+        } catch (err) {
+          console.error(`❌ Failed ${clinic.name}:`, err.message);
+        }
+      }
+      console.log("🏁 Multi-clinic sync finished");
+    });
+
+    app.get("/opportunities", verifyToken, async (req, res) => {
+      const { from, to } = req.query;
+
+      const query = {};
+
+      if (from && to) {
+        query.createdAt = {
+          $gte: new Date(from),
+          $lte: new Date(to),
+        };
+      }
+
+      const opportunities = await opportunitiesCollection.find(query).toArray();
+      res.send(opportunities);
+    });
+
+    app.get("/messages", verifyToken, async (req, res) => {
+      const { from, to } = req.query;
+
+      const query = {};
+
+      if (from && to) {
+        query.dateAdded = {
+          $gte: new Date(from),
+          $lte: new Date(to),
+        };
+      }
+
+      const messages = await messagesCollection.find(query).toArray();
+      res.send(messages);
+    });
+
+    // -------------------
+    app.post("/kpi-report", async (req, res) => {
+      try {
+        const { from, to, clinicIds = [] } = req.body;
+
+        const dateFrom = from ? new Date(from) : new Date("2000-01-01");
+        const dateTo = to ? new Date(to) : new Date();
+
+        // Convert clinicIds to ObjectId
+        const clinicObjectIds = clinicIds.map((id) => new ObjectId(id));
+
+        const clinics = await clinicCollection
+          .find({
+            _id: { $in: clinicObjectIds },
+            selected: true,
+          })
+          .toArray();
+
+        const result = await generateKPIReport({
+          dateFrom,
+          dateTo,
+          clinics,
+        });
+
+        res.json(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "KPI report failed" });
+      }
+    });
+
+    // KPI Report Service (Core Logic)
+    async function generateKPIReport({ dateFrom, dateTo, clinics }) {
+      const clinicIds = clinics.map((c) => c._id);
+
+      const conversationStages = new Set(
+        clinics.flatMap((c) => c.conversion_pipelines.map((p) => p.id)),
+      );
+      const bookingStages = new Set(
+        clinics.flatMap((c) => c.booking_pipelines.map((p) => p.id)),
+      );
+      const showingStages = new Set(
+        clinics.flatMap((c) => c.showing_pipelines.map((p) => p.id)),
+      );
+      const closeStages = new Set(
+        clinics.flatMap((c) => c.close_pipelines.map((p) => p.id)),
+      );
+
+      /* ---------- Leads ---------- */
+      const leads = await opportunitiesCollection
+        .aggregate([
+          {
+            $match: {
+              clinicId: { $in: clinicIds },
+              createdAt: { $gte: dateFrom, $lte: dateTo },
+            },
+          },
+        ])
+        .toArray();
+
+      /* ---------- Messages ---------- */
+      const messages = await messagesCollection
+        .aggregate([
+          {
+            $match: {
+              clinicId: { $in: clinicIds },
+              dateAdded: { $gte: dateFrom, $lte: dateTo },
+            },
+          },
+        ])
+        .toArray();
+
+      /* ---------- KPI Calculations ---------- */
+      const inboundCalls = messages.filter(
+        (m) => m.direction === "inbound" && m.messageType === "TYPE_CALL",
+      );
+
+      const answeredCalls = inboundCalls.filter(
+        (m) => m.status === "completed",
+      );
+
+      const inboundCallRate = inboundCalls.length
+        ? (answeredCalls.length / inboundCalls.length) * 100
+        : 0;
+
+      const countByStage = (set) =>
+        leads.filter((l) => set.has(l.pipelineStageId)).length;
+
+      /* ---------- Monthly Chart ---------- */
+      const monthlyChart = buildMonthlyChart({
+        leads,
+        conversationStages,
+        bookingStages,
+        showingStages,
+        closeStages,
+        dateTo,
+      });
+
+      /* ---------- Last 30 Days ---------- */
+      const last30Days = buildLast30Days({
+        leads,
+        messages,
+        conversationStages,
+        bookingStages,
+        showingStages,
+        closeStages,
+        dateTo,
+      });
+
+      return {
+        summary: {
+          newLeads: leads.length,
+          inboundCallRate: inboundCallRate.toFixed(2),
+          conversations: countByStage(conversationStages),
+          booking: countByStage(bookingStages),
+          showing: countByStage(showingStages),
+          close: countByStage(closeStages),
+        },
+        monthlyChart,
+        last30Days,
+      };
+    }
+
+    // Monthly Chart Builder
+    function buildMonthlyChart({
+      leads,
+      conversationStages,
+      bookingStages,
+      showingStages,
+      closeStages,
+      dateTo,
+    }) {
+      const months = [];
+
+      for (let i = 11; i >= 0; i--) {
+        const d = new Date(dateTo);
+        d.setMonth(d.getMonth() - i);
+
+        const key = `${d.getFullYear()}-${d.getMonth()}`;
+        months.push({
+          key,
+          month: d.toLocaleString("en-US", {
+            month: "short",
+            year: "numeric",
+          }),
+          totalLead: 0,
+          conversion: 0,
+          booking: 0,
+          showing: 0,
+          close: 0,
+        });
+      }
+
+      const map = Object.fromEntries(months.map((m) => [m.key, m]));
+
+      leads.forEach((l) => {
+        const d = new Date(l.createdAt);
+        const key = `${d.getFullYear()}-${d.getMonth()}`;
+        if (!map[key]) return;
+
+        map[key].totalLead++;
+        if (conversationStages.has(l.pipelineStageId)) map[key].conversion++;
+        if (bookingStages.has(l.pipelineStageId)) map[key].booking++;
+        if (showingStages.has(l.pipelineStageId)) map[key].showing++;
+        if (closeStages.has(l.pipelineStageId)) map[key].close++;
+      });
+
+      return Object.values(map);
+    }
+
+    // Last 30 Days KPI Builder
+    function buildLast30Days({
+      leads,
+      messages,
+      conversationStages,
+      bookingStages,
+      showingStages,
+      closeStages,
+      dateTo,
+    }) {
+      const rows = [];
+
+      for (let i = 0; i < 30; i++) {
+        const day = new Date(dateTo);
+        day.setDate(day.getDate() - i);
+
+        const start = new Date(day.setHours(0, 0, 0, 0));
+        const end = new Date(day.setHours(23, 59, 59, 999));
+
+        const dailyLeads = leads.filter(
+          (l) => new Date(l.createdAt) >= start && new Date(l.createdAt) <= end,
+        );
+
+        const dailyMessages = messages.filter(
+          (m) => new Date(m.dateAdded) >= start && new Date(m.dateAdded) <= end,
+        );
+
+        const inbound = dailyMessages.filter(
+          (m) => m.direction === "inbound" && m.messageType === "TYPE_CALL",
+        );
+
+        const answered = inbound.filter((m) => m.status === "completed");
+
+        rows.push({
+          date: start.toISOString().slice(0, 10),
+          totalLead: dailyLeads.length,
+          inboundCallRate: inbound.length
+            ? ((answered.length / inbound.length) * 100).toFixed(2)
+            : "0.00",
+          conversion: dailyLeads.filter((l) =>
+            conversationStages.has(l.pipelineStageId),
+          ).length,
+          booking: dailyLeads.filter((l) =>
+            bookingStages.has(l.pipelineStageId),
+          ).length,
+          showing: dailyLeads.filter((l) =>
+            showingStages.has(l.pipelineStageId),
+          ).length,
+          close: dailyLeads.filter((l) => closeStages.has(l.pipelineStageId))
+            .length,
+        });
+      }
+
+      return rows;
+    }
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
+      "Pinged your deployment. You successfully connected to MongoDB!",
     );
   } finally {
     // Ensures that the client will close when you finish/error
