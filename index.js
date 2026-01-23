@@ -659,7 +659,7 @@ async function run() {
       console.log("🏁 Multi-clinic sync finished");
     });
 
-    app.get("/opportunities", verifyToken, async (req, res) => {
+    app.get("/opportunities",  async (req, res) => {
       const { from, to } = req.query;
 
       const query = {};
@@ -675,7 +675,7 @@ async function run() {
       res.send(opportunities);
     });
 
-    app.get("/messages", verifyToken, async (req, res) => {
+    app.get("/messages",  async (req, res) => {
       const { from, to } = req.query;
 
       const query = {};
