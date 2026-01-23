@@ -17,19 +17,25 @@ const corsOptions = {
     "http://localhost:5174",
     "https://dental-implant-machine-5977.vercel.app",
     "https://dental-implant-machine-server-cgfs.vercel.app",
-    
+
     "https://dental-implant-machine.up.railway.app",
-    "https://dental-implant-machine-server.up.railway.app"
   ],
   credentials: true,
   optionSuccessStatus: 200,
 };
 
+// const cookieOptions = {
+//   httpOnly: true,
+//   secure: process.env.NODE_ENV === "production",
+//   sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
+// };
+
 const cookieOptions = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
+  secure: true,
+  sameSite: "none", 
 };
+
 
 admin.initializeApp({
   credential: admin.credential.cert({
