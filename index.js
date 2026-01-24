@@ -24,18 +24,17 @@ const corsOptions = {
   optionSuccessStatus: 200,
 };
 
-// const cookieOptions = {
-//   httpOnly: true,
-//   secure: process.env.NODE_ENV === "production",
-//   sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
-// };
-
 const cookieOptions = {
   httpOnly: true,
-  secure: true,
-  sameSite: "none", 
+  secure: process.env.NODE_ENV === "production",
+  sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
 };
 
+// const cookieOptions = {
+//   httpOnly: true,
+//   secure: true,
+//   sameSite: "none",
+// };
 
 admin.initializeApp({
   credential: admin.credential.cert({
@@ -361,7 +360,6 @@ async function run() {
     app.patch("/clinic/select", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const { clinicId, selected } = req.body;
-        console.log(clinicId, selected);
 
         if (!clinicId || typeof selected !== "boolean") {
           return res.status(400).send({
@@ -659,31 +657,56 @@ async function run() {
       console.log("🏁 Multi-clinic sync finished");
     });
 
-    app.get("/opportunities",  async (req, res) => {
+    app.get("/opportunities", verifyToken, async (req, res) => {
       const { from, to } = req.query;
-
       const query = {};
 
       if (from && to) {
+        const start = new Date(from);
+        start.setHours(0, 0, 0, 0);
+
+        const end = new Date(to);
+        end.setHours(23, 59, 59, 999);
+
         query.createdAt = {
-          $gte: new Date(from),
-          $lte: new Date(to),
+          $gte: start,
+          $lte: end,
         };
       }
 
+      // if (from && to) {
+      //   query.createdAt = {
+      //     $gte: new Date(from),
+      //     $lt: new Date(new Date(to).setDate(new Date(to).getDate() + 1)),
+      //   };
+      // }
+
       const opportunities = await opportunitiesCollection.find(query).toArray();
+
       res.send(opportunities);
     });
 
-    app.get("/messages",  async (req, res) => {
+    app.get("/messages", verifyToken, async (req, res) => {
       const { from, to } = req.query;
-
       const query = {};
 
+      // if (from && to) {
+      //   query.dateAdded = {
+      //     $gte: new Date(from),
+      //     $lt: new Date(new Date(to).setDate(new Date(to).getDate() + 1)),
+      //   };
+      // }
+
       if (from && to) {
+        const start = new Date(from);
+        start.setHours(0, 0, 0, 0);
+
+        const end = new Date(to);
+        end.setHours(23, 59, 59, 999);
+
         query.dateAdded = {
-          $gte: new Date(from),
-          $lte: new Date(to),
+          $gte: start,
+          $lte: end,
         };
       }
 
