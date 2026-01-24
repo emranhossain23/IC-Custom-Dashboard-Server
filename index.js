@@ -83,12 +83,12 @@ async function run() {
       // console.log(token)
 
       if (!token) {
-        return res.status(401).send({ message: "unauthorized access" });
+        return res.status(401).send({ message: "token not found unauthorized access" });
       }
       jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
         if (err) {
           console.log(err);
-          return res.status(401).send({ message: "unauthorized access" });
+          return res.status(401).send({ message: "invalid token unauthorized access" });
         }
         req.user = decoded;
         // console.log('in verify',req.user);
@@ -577,7 +577,7 @@ async function run() {
     //   console.log("🏁 Multi-clinic sync finished");
     // });
 
-    cron.schedule("*/10 * * * *", async () => {
+    cron.schedule("*0 */6 * * *", async () => {
       console.log("🔄 Multi-clinic sync started");
 
       const clinics = await db
