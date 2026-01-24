@@ -83,12 +83,16 @@ async function run() {
       // console.log(token)
 
       if (!token) {
-        return res.status(401).send({ message: "token not found unauthorized access" });
+        return res
+          .status(401)
+          .send({ message: "token not found unauthorized access" });
       }
       jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
         if (err) {
           console.log(err);
-          return res.status(401).send({ message: "invalid token unauthorized access" });
+          return res
+            .status(401)
+            .send({ message: "invalid token unauthorized access" });
         }
         req.user = decoded;
         // console.log('in verify',req.user);
@@ -577,7 +581,7 @@ async function run() {
     //   console.log("🏁 Multi-clinic sync finished");
     // });
 
-    cron.schedule("*0 */6 * * *", async () => {
+    cron.schedule("0 */3 * * *", async () => {
       console.log("🔄 Multi-clinic sync started");
 
       const clinics = await db
@@ -714,7 +718,88 @@ async function run() {
       res.send(messages);
     });
 
-    // -------------------
+    // ---------- performance optimize -----------
+    // const pLimit = require("p-limit");
+    // const CONCURRENCY = 3;
+    // const limit = pLimit(CONCURRENCY);
+    // cron.schedule("0 */3 * * *", async () => {
+    //   console.log("🔄 Multi-clinic sync started");
+
+    //   const clinics = await db
+    //     .collection("clinics")
+    //     .find({ selected: true })
+    //     .toArray();
+
+    //   const syncClinic = async (clinic) => {
+    //     try {
+    //       console.log(`➡️ Syncing ${clinic.name}`);
+
+    //       const [opportunities, messages] = await Promise.all([
+    //         fetchOpportunities(clinic),
+    //         fetchMessages(clinic),
+    //       ]);
+
+    //       if (opportunities.length > 0) {
+    //         const oppOps = opportunities.map((o) => ({
+    //           updateOne: {
+    //             filter: { remoteId: o.id, clinicId: clinic._id },
+    //             update: {
+    //               $set: {
+    //                 clinicId: clinic._id,
+    //                 remoteId: o.id,
+    //                 contactId: o.contactId,
+    //                 pipelineId: o.pipelineId,
+    //                 pipelineStageId: o.pipelineStageId,
+    //                 createdAt: new Date(o.createdAt),
+    //               },
+    //             },
+    //             upsert: true,
+    //           },
+    //         }));
+    //         await db.collection("opportunities").bulkWrite(oppOps);
+    //       }
+
+    //       if (messages.length > 0) {
+    //         const msgOps = messages.map((m) => ({
+    //           updateOne: {
+    //             filter: { remoteId: m.id, clinicId: clinic._id },
+    //             update: {
+    //               $set: {
+    //                 clinicId: clinic._id,
+    //                 contactId: m.contactId,
+    //                 direction: m.direction,
+    //                 messageType: m.messageType,
+    //                 dateAdded: new Date(m.dateAdded),
+    //                 status: m.status,
+    //                 remoteId: m.id,
+    //               },
+    //             },
+    //             upsert: true,
+    //           },
+    //         }));
+    //         await db.collection("messages").bulkWrite(msgOps);
+    //       }
+
+    //       await db.collection("clinics").updateOne(
+    //         { _id: clinic._id },
+    //         { $set: { lastSyncAt: new Date() } }
+    //       );
+
+    //       console.log(
+    //         `✅ Done ${clinic.name}: ${opportunities.length} Opps, ${messages.length} Msgs`
+    //       );
+    //     } catch (err) {
+    //       console.error(`❌ Failed ${clinic.name}:`, err.message);
+    //     }
+    //   };
+
+    //   await Promise.all(
+    //     clinics.map((clinic) => limit(() => syncClinic(clinic)))
+    //   );
+
+    //   console.log("🏁 Multi-clinic sync finished");
+    // });
+
     app.post("/kpi-report", async (req, res) => {
       try {
         const { from, to, clinicIds = [] } = req.body;
