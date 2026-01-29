@@ -10,6 +10,9 @@ const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
 const cron = require("node-cron");
 const axios = require("axios");
+const dayjs = require("dayjs");
+const utc = require("dayjs/plugin/utc");
+const timezone = require("dayjs/plugin/timezone");
 
 const corsOptions = {
   origin: [
@@ -463,6 +466,7 @@ async function run() {
               location_id: clinic.location_id,
               limit: 100,
               page,
+              pipeline_id: clinic.pipeline_id,
             },
             headers: {
               Authorization: `Bearer ${clinic.authorization}`,
@@ -514,7 +518,7 @@ async function run() {
     }
 
     // cron.schedule("0 */6 * * *", async () => {
-    //   // cron.schedule("*/1 * * * *", async () => {
+    //   cron.schedule("*/1 * * * *", async () => {
     //   console.log("Multi-clinic sync started");
 
     //   const clinics = await db
@@ -529,6 +533,9 @@ async function run() {
     //       const opportunities = await fetchOpportunities(clinic);
     //       const messages = await fetchMessages(clinic);
 
+    //       const filteredOpportunities = opportunities.filter(o=>o.pipelineId === clinic.pipeline_id)
+    //       console.log(filteredOpportunities.length);
+
     //       // Clear old clinic data
     //       await db.collection("opportunities").deleteMany({
     //         clinicId: new ObjectId(clinic._id),
@@ -539,7 +546,7 @@ async function run() {
     //       });
 
     //       // Insert new
-    //       if (opportunities.length) {
+    //       if (filteredOpportunities.length) {
     //         await db.collection("opportunities").insertMany(
     //           opportunities.map((o) => ({
     //             clinicId: clinic._id,
@@ -581,13 +588,10 @@ async function run() {
     //   console.log("🏁 Multi-clinic sync finished");
     // });
 
-    cron.schedule("0 */3 * * *", async () => {
+    cron.schedule("*/5 * * * *", async () => {
       console.log("🔄 Multi-clinic sync started");
 
-      const clinics = await db
-        .collection("clinics")
-        .find({ selected: true })
-        .toArray();
+      const clinics = await db.collection("clinics").find().toArray();
 
       for (const clinic of clinics) {
         try {
@@ -610,9 +614,15 @@ async function run() {
                     pipelineId: o.pipelineId,
                     pipelineStageId: o.pipelineStageId,
                     createdAt: new Date(o.createdAt),
-                    // name: o.name,
+                    // estDateOnly: dayjs(o.createdAt)
+                    //   .tz("America/New_York")
+                    //   .format("YYYY-MM-DD"),
+                    // createdAt: o.createdAt.split("T")[0],
+                    name: o.name,
+                    clinicTimezone: clinic.timezone,
                     // status: o.status,
                     // updatedAt: new Date(o.updatedAt),
+                    // dateOnly: o.createdAt.split("T")[0],
                   },
                 },
                 upsert: true,
@@ -632,8 +642,10 @@ async function run() {
                     direction: m.direction,
                     messageType: m.messageType,
                     dateAdded: new Date(m.dateAdded),
+                    // dateAdded: m.dateAdded.split("T")[0],
                     status: m.status,
                     remoteId: m.id,
+                    clinicTimezone: clinic.timezone,
 
                     // conversationId: m.conversationId,
                   },
@@ -661,62 +673,226 @@ async function run() {
       console.log("🏁 Multi-clinic sync finished");
     });
 
-    app.get("/opportunities", verifyToken, async (req, res) => {
-      const { from, to } = req.query;
-      const query = {};
+    // ***
+    // app.get("/opportunities", verifyToken, async (req, res) => {
+    //   const { from, to } = req.query;
+    //   const query = {};
+    //   console.log(from,to);
 
-      if (from && to) {
-        const start = new Date(from);
-        start.setHours(0, 0, 0, 0);
+    //   if (from && to) {
+    //     const start = new Date(from);
+    //     start.setHours(0, 0, 0, 0);
 
-        const end = new Date(to);
-        end.setHours(23, 59, 59, 999);
+    //     const end = new Date(to);
+    //     end.setHours(23, 59, 59, 999);
 
-        query.createdAt = {
-          $gte: start,
-          $lte: end,
+    //     query.createdAt = {
+    //       $gte: start,
+    //       $lte: end,
+    //     };
+    //   }
+
+    //   // if (from && to) {
+    //   //   query.createdAt = {
+    //   //     $gte: new Date(from),
+    //   //     $lt: new Date(new Date(to).setDate(new Date(to).getDate() + 1)),
+    //   //   };
+    //   // }
+
+    //   const opportunities = await opportunitiesCollection.find(query).toArray();
+
+    //   res.send(opportunities);
+    // });
+
+    // ****
+
+    // row
+    // app.get("/opportunities", verifyToken, async (req, res) => {
+    //   const { from, to } = req.query;
+    //   const query = {};
+
+    //   if (from && to) {
+    //     // const start = new Date(from);
+    //     // start.setHours(0, 0, 0, 0);
+
+    //     // const end = new Date(to);
+    //     // end.setHours(23, 59, 59, 999);
+
+    //     query.createdAt = {
+    //       $gte: new Date(from),
+    //       $lte: new Date(to),
+    //     };
+    //   }
+    //   // console.log(query);
+
+    //   const opportunities = await opportunitiesCollection.find(query).toArray();
+    //   res.send(opportunities);
+    // });
+
+    dayjs.extend(utc);
+    dayjs.extend(timezone);
+    // app.get("/opportunities", async (req, res) => {
+    //   const { from, to, clinicId } = req.query;
+
+    //   // console.log(clinicId);
+    //   const clinic = await clinicCollection.findOne({
+    //     _id: new ObjectId(clinicId),
+    //   });
+    //   // console.log(clinic);
+
+    //   const tz = clinic?.timezone || "UTC";
+    //   // console.log(tz);
+
+    //   const start = dayjs.tz(from, tz).startOf("day").toDate();
+    //   const end = dayjs.tz(to, tz).endOf("day").toDate();
+    //   // console.log(start, end);
+
+    //   const opportunities = await opportunitiesCollection
+    //     .find({
+    //       clinicId: new ObjectId("696dfd4719d8c1c8737994b2"),
+    //       createdAt: { $gte: start, $lte: end },
+    //     })
+    //     .toArray();
+
+    //   // console.log(opportunities.length);
+
+    //   res.send(opportunities);
+    // });
+
+    app.get("/opportunities", async (req, res) => {
+      const { from, to, clinicIds } = req.query;
+
+      const ids = JSON.parse(clinicIds);
+      const objectIds = ids.map((id) => new ObjectId(id));
+
+      const clinics = await clinicCollection
+        .find({ _id: { $in: objectIds } })
+        .toArray();
+
+      const orConditions = clinics.map((clinic) => {
+        const tz = clinic.timezone || "UTC";
+
+        const start = dayjs.tz(from, tz).startOf("day").toDate();
+        const end = dayjs.tz(to, tz).endOf("day").toDate();
+
+        return {
+          clinicId: new ObjectId(clinic._id),
+          createdAt: { $gte: start, $lte: end },
         };
-      }
+      });
 
-      // if (from && to) {
-      //   query.createdAt = {
-      //     $gte: new Date(from),
-      //     $lt: new Date(new Date(to).setDate(new Date(to).getDate() + 1)),
-      //   };
-      // }
-
-      const opportunities = await opportunitiesCollection.find(query).toArray();
+      const opportunities = await opportunitiesCollection
+        .find({ $or: orConditions })
+        .toArray();
 
       res.send(opportunities);
     });
 
-    app.get("/messages", verifyToken, async (req, res) => {
-      const { from, to } = req.query;
-      const query = {};
+    // app.get("/messages", async (req, res) => {
+    //   const { from, to, clinicId } = req.query;
 
-      // if (from && to) {
-      //   query.dateAdded = {
-      //     $gte: new Date(from),
-      //     $lt: new Date(new Date(to).setDate(new Date(to).getDate() + 1)),
-      //   };
-      // }
+    //   // console.log(clinicId);
+    //   const clinic = await clinicCollection.findOne({
+    //     _id: new ObjectId(clinicId),
+    //   });
+    //   // console.log(clinic);
 
-      if (from && to) {
-        const start = new Date(from);
-        start.setHours(0, 0, 0, 0);
+    //   const tz = clinic?.timezone || "UTC";
+    //   // console.log(tz);
 
-        const end = new Date(to);
-        end.setHours(23, 59, 59, 999);
+    //   const start = dayjs.tz(from, tz).startOf("day").toDate();
+    //   const end = dayjs.tz(to, tz).endOf("day").toDate();
+    //   // console.log(start, end);
 
-        query.dateAdded = {
-          $gte: start,
-          $lte: end,
+    //   const messages = await messagesCollection
+    //     .find({
+    //       clinicId: new ObjectId("696dfd4719d8c1c8737994b2"),
+    //       dateAdded: { $gte: start, $lte: end },
+    //     })
+    //     .toArray();
+
+    //   // console.log(messages.length);
+
+    //   res.send(messages);
+    // });
+
+    app.get("/messages", async (req, res) => {
+      const { from, to, clinicIds } = req.query;
+
+      const ids = JSON.parse(clinicIds);
+      const objectIds = ids.map((id) => new ObjectId(id));
+
+      const clinics = await clinicCollection
+        .find({ _id: { $in: objectIds } })
+        .toArray();
+
+      const orConditions = clinics.map((clinic) => {
+        const tz = clinic.timezone || "UTC";
+
+        const start = dayjs.tz(from, tz).startOf("day").toDate();
+        const end = dayjs.tz(to, tz).endOf("day").toDate();
+
+        return {
+          clinicId: clinic._id,
+          dateAdded: { $gte: start, $lte: end },
         };
-      }
+      });
 
-      const messages = await messagesCollection.find(query).toArray();
+      const messages = await messagesCollection
+        .find({ $or: orConditions })
+        .toArray();
+
       res.send(messages);
     });
+
+    // *****
+    // dayjs.extend(utc);
+    // dayjs.extend(timezone);
+    // app.get("/opportunities", verifyToken, async (req, res) => {
+    //   const { from, to } = req.query;
+
+    //   if (from && to) {
+    //     const start = dayjs
+    //       .tz(from, "America/New_York")
+    //       .startOf("day")
+    //       .toDate();
+
+    //     const end = dayjs.tz(to, "America/New_York").endOf("day").toDate();
+
+    //     const query = {
+    //       createdAt: { $gte: start, $lte: end },
+    //     };
+    //     console.log(query);
+
+    //     const opportunities = await opportunitiesCollection
+    //       .find(query)
+    //       .toArray();
+    //     res.send(opportunities);
+    //   }
+    // });
+
+    // app.get("/messages", verifyToken, async (req, res) => {
+    //   const { from, to } = req.query;
+    //   const query = {};
+
+    //   if (from && to) {
+    //     // const start = new Date(from);
+    //     // start.setHours(0, 0, 0, 0);
+
+    //     // const end = new Date(to);
+    //     // end.setHours(23, 59, 59, 999);
+
+    //     query.dateAdded = {
+    //       $gte: new Date(from),
+    //       $lte: new Date(to),
+    //     };
+    //   }
+    //   // console.log(query);
+
+    //   // console.log(query);
+    //   const messages = await messagesCollection.find(query).toArray();
+    //   res.send(messages);
+    // });
 
     // ---------- performance optimize -----------
     // const pLimit = require("p-limit");
