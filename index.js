@@ -596,7 +596,7 @@ async function run() {
     //   console.log("🏁 Multi-clinic sync finished");
     // });
 
-    cron.schedule("*0 */3 * * *", async () => {
+    cron.schedule("0 */3 * * *", async () => {
       console.log("🔄 Multi-clinic sync started");
 
       const clinics = await db.collection("clinics").find().toArray();
