@@ -122,7 +122,7 @@ async function run() {
       const token = jwt.sign(
         { email: user.email },
         process.env.ACCESS_TOKEN_SECRET,
-        { expiresIn: "1h" },
+        { expiresIn: "10h" },
       );
 
       res.cookie("token", token, cookieOptions).send({ success: true, token });
@@ -151,6 +151,12 @@ async function run() {
     app.get("/user/:email", async (req, res) => {
       const { email } = req.params;
       const result = await usersCollection.findOne({ email: email });
+      res.send(result);
+    });
+
+    // setter user
+    app.get("/all_setter", async (req, res) => {
+      const result = await usersCollection.find({ role: "Setter" }).toArray();
       res.send(result);
     });
 
@@ -495,8 +501,10 @@ async function run() {
           locationId: clinic.location_id,
           limit: 100,
         };
-        if (clinic.lastSyncAt)
-          params.startAfter = clinic.lastSyncAt.toISOString();
+
+        // if (clinic.lastSyncAt)
+        //   params.startAfter = clinic.lastSyncAt.toISOString();
+
         if (cursor) params.cursor = cursor;
 
         const res = await axios.get(
@@ -588,7 +596,7 @@ async function run() {
     //   console.log("🏁 Multi-clinic sync finished");
     // });
 
-    cron.schedule("*/5 * * * *", async () => {
+    cron.schedule("*0 */3 * * *", async () => {
       console.log("🔄 Multi-clinic sync started");
 
       const clinics = await db.collection("clinics").find().toArray();
@@ -619,6 +627,7 @@ async function run() {
                     //   .format("YYYY-MM-DD"),
                     // createdAt: o.createdAt.split("T")[0],
                     name: o.name,
+                    lastStageChangeAt: new Date(o.lastStageChangeAt),
                     clinicTimezone: clinic.timezone,
                     // status: o.status,
                     // updatedAt: new Date(o.updatedAt),
@@ -646,6 +655,16 @@ async function run() {
                     status: m.status,
                     remoteId: m.id,
                     clinicTimezone: clinic.timezone,
+                    userId: m.userId,
+
+                    dateLocal: dayjs(m.dateAdded)
+                      .tz(clinic.timezone)
+                      .format("YYYY-MM-DD"),
+                    dateLocalFull: new Date(
+                      dayjs(m.dateAdded)
+                        .tz(clinic.timezone)
+                        .format("YYYY-MM-DDTHH:mm:ss.SSS[Z]"),
+                    ),
 
                     // conversationId: m.conversationId,
                   },
@@ -731,6 +750,8 @@ async function run() {
 
     dayjs.extend(utc);
     dayjs.extend(timezone);
+
+    // single clinic
     // app.get("/opportunities", async (req, res) => {
     //   const { from, to, clinicId } = req.query;
 
@@ -759,15 +780,56 @@ async function run() {
     //   res.send(opportunities);
     // });
 
+    // multiple clinics
+    // app.get("/opportunities", async (req, res) => {
+    //   const { from, to, clinicIds } = req.query;
+    //   // if (!clinicIds) return res.send([]);
+
+    //   const ids = JSON.parse(clinicIds);
+    //   // if (ids.length === 0) return res.send([]);
+
+    //   const objectIds = ids.map((id) => new ObjectId(id)) || [];
+    //   // if (objectIds.length <= 1) return [];
+    //   // console.log(objectIds);
+
+    //   const clinics = await clinicCollection
+    //     .find({ _id: { $in: objectIds } })
+    //     .toArray();
+    //   // if (clinics.length === 0) return res.send([]);
+
+    //   const orConditions = clinics.map((clinic) => {
+    //     const tz = clinic.timezone || "UTC";
+
+    //     const start = dayjs.tz(from, tz).startOf("day").toDate();
+    //     const end = dayjs.tz(to, tz).endOf("day").toDate();
+
+    //     return {
+    //       clinicId: new ObjectId(clinic._id),
+    //       createdAt: { $gte: start, $lte: end },
+    //     };
+    //   });
+
+    //   const opportunities = await opportunitiesCollection
+    //     .find({ $or: orConditions })
+    //     .toArray();
+
+    //   res.send(opportunities);
+    // });
+
+    // multiple clinics with empty clinicIds handle
     app.get("/opportunities", async (req, res) => {
       const { from, to, clinicIds } = req.query;
 
-      const ids = JSON.parse(clinicIds);
+      const ids = clinicIds ? JSON.parse(clinicIds) : [];
+      if (ids.length === 0) return res.send([]);
+
       const objectIds = ids.map((id) => new ObjectId(id));
 
       const clinics = await clinicCollection
         .find({ _id: { $in: objectIds } })
         .toArray();
+
+      if (clinics.length === 0) return res.send([]);
 
       const orConditions = clinics.map((clinic) => {
         const tz = clinic.timezone || "UTC";
@@ -781,6 +843,8 @@ async function run() {
         };
       });
 
+      if (orConditions.length === 0) return res.send([]);
+
       const opportunities = await opportunitiesCollection
         .find({ $or: orConditions })
         .toArray();
@@ -788,6 +852,7 @@ async function run() {
       res.send(opportunities);
     });
 
+    // single clinic
     // app.get("/messages", async (req, res) => {
     //   const { from, to, clinicId } = req.query;
 
@@ -816,33 +881,160 @@ async function run() {
     //   res.send(messages);
     // });
 
+    // multiple clinics v1
+    // app.get("/messages", async (req, res) => {
+    //   const { from, to, clinicIds } = req.query;
+    //   // if (!clinicIds) return res.send([]);
+
+    //   const ids = JSON.parse(clinicIds);
+    //   // if (ids.length === 0) return res.send([]);
+
+    //   const objectIds = ids.map((id) => new ObjectId(id));
+
+    //   const clinics = await clinicCollection
+    //     .find({ _id: { $in: objectIds } })
+    //     .toArray();
+    //   // if (clinics.length === 0) return res.send([]);
+
+    //   const orConditions = clinics.map((clinic) => {
+    //     const tz = clinic.timezone || "UTC";
+
+    //     const start = dayjs.tz(from, tz).startOf("day").toDate();
+    //     const end = dayjs.tz(to, tz).endOf("day").toDate();
+
+    //     return {
+    //       clinicId: clinic._id,
+    //       dateAdded: { $gte: start, $lte: end },
+    //     };
+    //   });
+
+    //   const messages = await messagesCollection
+    //     .find({ $or: orConditions })
+    //     .toArray();
+    //     console.log(messages.length);
+
+    //   res.send(messages);
+    // });
+
+    // multiple clinics v2
+    // app.get("/messages", async (req, res) => {
+    //   const { from, to, clinicIds } = req.query;
+
+    //   const ids = clinicIds ? JSON.parse(clinicIds) : [];
+    //   if (ids.length === 0) return res.send([]);
+
+    //   const objectIds = ids.map((id) => new ObjectId(id));
+
+    //   const clinics = await clinicCollection
+    //     .find({ _id: { $in: objectIds } })
+    //     .toArray();
+
+    //   if (clinics.length === 0) return res.send([]);
+
+    //   const orConditions = clinics.map((clinic) => {
+    //     const tz = clinic.timezone || "UTC";
+
+    //     const start = dayjs.tz(from, tz).startOf("day").toDate();
+    //     const end = dayjs.tz(to, tz).endOf("day").toDate();
+
+    //     return {
+    //       clinicId: new ObjectId(clinic._id),
+    //       dateAdded: { $gte: start, $lte: end },
+    //     };
+    //   });
+
+    //   if (orConditions.length === 0) return res.send([]);
+
+    //   const messages = await messagesCollection
+    //     .find({ $or: orConditions })
+    //     .toArray();
+
+    //   res.send(messages);
+    // });
+
+    // alada time zone function
+
+    // 81.82% 1-10 dec
+    // app.get("/messages", async (req, res) => {
+    //   try {
+    //     const { from, to, clinicIds } = req.query;
+
+    //     const ids = clinicIds ? JSON.parse(clinicIds) : [];
+    //     if (!ids.length) return res.send([]);
+
+    //     const objectIds = ids.map((id) => new ObjectId(id));
+
+    //     const clinics = await clinicCollection
+    //       .find({ _id: { $in: objectIds } })
+    //       .toArray();
+
+    //     if (!clinics.length) return res.send([]);
+
+    //     const orConditions = clinics.map((clinic) => {
+    //       const tz = clinic.timezone || "UTC";
+
+    //       // convert incoming UTC → clinic timezone → clamp day → back to UTC
+    //       const start = dayjs(from).tz(tz).startOf("day").utc().toDate();
+
+    //       const end = dayjs(to).tz(tz).endOf("day").utc().toDate();
+
+    //       return {
+    //         clinicId: clinic._id,
+    //         dateAdded: { $gte: start, $lte: end },
+    //       };
+    //     });
+
+    //     const messages = await messagesCollection
+    //       .find({ $or: orConditions })
+    //       .toArray();
+
+    //     res.send(messages);
+    //   } catch (err) {
+    //     console.error("Messages fetch error:", err);
+    //     res.status(500).send({ error: "Failed to fetch messages" });
+    //   }
+    // });
+
     app.get("/messages", async (req, res) => {
-      const { from, to, clinicIds } = req.query;
+      try {
+        const { from, to, clinicIds } = req.query;
+        console.log(from, to);
 
-      const ids = JSON.parse(clinicIds);
-      const objectIds = ids.map((id) => new ObjectId(id));
+        const ids = clinicIds ? JSON.parse(clinicIds) : [];
+        if (ids.length === 0) return res.send([]);
 
-      const clinics = await clinicCollection
-        .find({ _id: { $in: objectIds } })
-        .toArray();
+        const objectIds = ids.map((id) => new ObjectId(id));
 
-      const orConditions = clinics.map((clinic) => {
-        const tz = clinic.timezone || "UTC";
+        const clinics = await clinicCollection
+          .find({ _id: { $in: objectIds } })
+          .toArray();
 
-        const start = dayjs.tz(from, tz).startOf("day").toDate();
-        const end = dayjs.tz(to, tz).endOf("day").toDate();
+        if (clinics.length === 0) return res.send([]);
 
-        return {
-          clinicId: clinic._id,
-          dateAdded: { $gte: start, $lte: end },
-        };
-      });
+        const orConditions = clinics.map((clinic) => {
+          // const tz = clinic.timezone || "UTC";
+          // const tz = "Asia/Dhaka" || "UTC";
+          const tz = "America/Denver" || "UTC";
 
-      const messages = await messagesCollection
-        .find({ $or: orConditions })
-        .toArray();
+          const start = dayjs.tz(from, tz).startOf("day").toDate();
+          const end = dayjs.tz(to, tz).endOf("day").toDate();
+          console.log(start, end);
 
-      res.send(messages);
+          return {
+            clinicId: clinic._id,
+            dateAdded: { $gte: start, $lte: end },
+          };
+        });
+
+        const messages = await messagesCollection
+          .find({ $or: orConditions })
+          .toArray();
+
+        res.send(messages);
+      } catch (err) {
+        console.error("Messages fetch error:", err);
+        res.status(500).send({ error: "Failed to fetch messages" });
+      }
     });
 
     // *****
