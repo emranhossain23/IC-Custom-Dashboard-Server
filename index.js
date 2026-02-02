@@ -2,7 +2,7 @@ const express = require("express");
 const app = express();
 require("dotenv").config();
 const cors = require("cors");
-const port = process.env.PORT || 5000;
+const port = process.env.PORT || 5100;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const admin = require("firebase-admin");
 const nodemailer = require("nodemailer");
@@ -20,7 +20,6 @@ const corsOptions = {
     "http://localhost:5174",
     "https://dental-implant-machine-5977.vercel.app",
     "https://dental-implant-machine-server-cgfs.vercel.app",
-
     "https://dental-implant-machine.up.railway.app",
   ],
   credentials: true,
@@ -52,7 +51,9 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(cookieParser());
 
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.wezoknx.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@emran197.xr5xuks.mongodb.net/?appName=Emran197`;
+
+// const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.wezoknx.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -200,6 +201,7 @@ async function run() {
           res.json({ success: true, updated: true, result });
         }
       } catch (error) {
+        console.log("Error creating user:", error);
         res.status(400).json({ error: error.message });
       }
     });
@@ -217,11 +219,11 @@ async function run() {
       });
 
       const mailOptions = {
-        from: '"DIM Dashboard" <no-reply@dim.com>',
+        from: '"ImplantConnect Dashboard" <no-reply@dim.com>',
         to: email,
-        subject: "Welcome to DIM Dashboard!",
+        subject: "Welcome to ImplantConnect Dashboard!",
         html: `
-      <h3>Welcome to DIM Dashboard!</h3>
+      <h3>Welcome to ImplantConnect Dashboard!</h3>
       <p>Hello ${name}!</p>
       <p>Your account has been successfully created.</p>
       <p>🔐 Temporary Password: <b>${tempPassword}</b></p>

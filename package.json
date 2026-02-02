@@ -24,6 +24,7 @@
     "mongodb": "^6.20.0",
     "node-cron": "^4.2.1",
     "nodemailer": "^7.0.10",
+    "nodemon": "^3.1.11",
     "plaid": "^39.1.0",
     "stripe": "^20.0.0"
   },
