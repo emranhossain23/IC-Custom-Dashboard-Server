@@ -21,6 +21,8 @@ const corsOptions = {
     "https://dental-implant-machine-5977.vercel.app",
     "https://dental-implant-machine-server-cgfs.vercel.app",
     "https://dental-implant-machine.up.railway.app",
+    "https://ic-custom-dashboard-web-production.up.railway.app",
+    
   ],
   credentials: true,
   optionSuccessStatus: 200,
