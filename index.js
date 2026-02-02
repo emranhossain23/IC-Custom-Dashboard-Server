@@ -17,7 +17,7 @@ const timezone = require("dayjs/plugin/timezone");
 const corsOptions = {
   origin: [
     "http://localhost:5173",
-    "https://ic-custom-dashboard-web-production.up.railway.app",
+    "ic-custom-dashboard-web.up.railway.app",
     "https://dental-implant-machine-5977.vercel.app",
     "https://dental-implant-machine-server-cgfs.vercel.app",
     // "https://dental-implant-machine.up.railway.app",
