@@ -5,7 +5,14 @@ const cors = require("cors");
 const port = process.env.PORT || 5000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const admin = require("firebase-admin");
-const nodemailer = require("nodemailer");
+const crypto = require("crypto");
+const {
+  APP_URL,
+  sendWelcomeEmail,
+  sendPasswordResetEmail,
+  sendAdminTempPasswordEmail,
+} = require("./mailer");
+const registerReportRoutes = require("./reports");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
 const cron = require("node-cron");
@@ -173,7 +180,7 @@ async function run() {
         const findUser = await usersCollection.findOne(query);
 
         if (!findUser) {
-          const tempPassword = Math.random().toString(36).slice(-10) + "A1#";
+          const tempPassword = generateTempPassword();
 
           const user = await admin.auth().createUser({
             email,
@@ -183,9 +190,7 @@ async function run() {
 
           const resetLink = await admin
             .auth()
-            .generatePasswordResetLink(email, {
-              url: "https://dental-implant-machine-5977.vercel.app",
-            });
+            .generatePasswordResetLink(email, { url: APP_URL });
 
           await sendWelcomeEmail(email, name, tempPassword, resetLink);
 
@@ -208,34 +213,119 @@ async function run() {
       }
     });
 
-    // send mail
-    const sendWelcomeEmail = async (email, name, tempPassword, resetLink) => {
-      const transporter = nodemailer.createTransport({
-        host: "smtp.gmail.com",
-        port: 465,
-        secure: true,
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        },
+    // temp password: 12 random chars + guaranteed upper/digit/symbol
+    const generateTempPassword = () =>
+      crypto.randomBytes(9).toString("base64").replace(/[+/=]/g, "x") + "A1#";
+
+    // ---- password reset ----
+    // simple in-memory throttle so the public endpoint can't be used to spam inboxes
+    const resetThrottle = new Map();
+    const RESET_COOLDOWN_MS = 60 * 1000;
+
+    // public: "Forgot password?" on the login page
+    app.post("/auth/forgot-password", async (req, res) => {
+      const email = String(req.body?.email || "")
+        .trim()
+        .toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).send({ message: "Please enter a valid email" });
+      }
+
+      const last = resetThrottle.get(email);
+      if (last && Date.now() - last < RESET_COOLDOWN_MS) {
+        return res.status(429).send({
+          message: "Please wait a minute before requesting another email",
+        });
+      }
+      resetThrottle.set(email, Date.now());
+
+      try {
+        const fbUser = await admin.auth().getUserByEmail(email);
+        const resetLink = await admin
+          .auth()
+          .generatePasswordResetLink(email, { url: APP_URL });
+        await sendPasswordResetEmail(email, fbUser.displayName, resetLink);
+      } catch (error) {
+        // don't reveal whether the account exists
+        if (error.code !== "auth/user-not-found") {
+          console.error("Forgot password error:", error.message);
+          return res
+            .status(500)
+            .send({ message: "Could not send reset email. Try again later." });
+        }
+      }
+
+      res.send({
+        success: true,
+        message:
+          "If an account exists for that email, a reset link has been sent.",
       });
+    });
 
-      const mailOptions = {
-        from: '"ImplantConnect Dashboard" <no-reply@dim.com>',
-        to: email,
-        subject: "Welcome to ImplantConnect Dashboard!",
-        html: `
-      <h3>Welcome to ImplantConnect Dashboard!</h3>
-      <p>Hello ${name}!</p>
-      <p>Your account has been successfully created.</p>
-      <p>🔐 Temporary Password: <b>${tempPassword}</b></p>
-      <p>⚠️ You must change your password immediately after first login.</p>
-      <p>Reset your password here: <a href="${resetLink}">Change Password</a></p>
-    `,
-      };
+    // admin: reset another user's password
+    //   mode "link" -> email the user a reset link
+    //   mode "temp" -> set a new temporary password and email it to the user
+    app.post(
+      "/admin/reset-password",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { email, mode = "link" } = req.body || {};
+        if (!email) return res.status(400).send({ message: "email is required" });
+        if (!["link", "temp"].includes(mode)) {
+          return res.status(400).send({ message: "mode must be link or temp" });
+        }
 
-      await transporter.sendMail(mailOptions);
-    };
+        try {
+          const fbUser = await admin.auth().getUserByEmail(email);
+          const dbUser = await usersCollection.findOne({ email });
+          const name = dbUser?.name || fbUser.displayName;
+
+          if (mode === "temp") {
+            const tempPassword = generateTempPassword();
+            await admin.auth().updateUser(fbUser.uid, { password: tempPassword });
+            // sign the user out of existing sessions
+            await admin.auth().revokeRefreshTokens(fbUser.uid);
+            const resetLink = await admin
+              .auth()
+              .generatePasswordResetLink(email, { url: APP_URL });
+            await sendAdminTempPasswordEmail(email, name, tempPassword, resetLink);
+          } else {
+            const resetLink = await admin
+              .auth()
+              .generatePasswordResetLink(email, { url: APP_URL });
+            await sendPasswordResetEmail(email, name, resetLink);
+          }
+
+          await usersCollection.updateOne(
+            { email },
+            {
+              $set: {
+                passwordResetAt: Date.now(),
+                passwordResetBy: req.user.email,
+              },
+            },
+          );
+
+          res.send({
+            success: true,
+            message:
+              mode === "temp"
+                ? `Temporary password emailed to ${email}`
+                : `Reset link emailed to ${email}`,
+          });
+        } catch (error) {
+          console.error("Admin reset password error:", error.message);
+          const status = error.code === "auth/user-not-found" ? 404 : 500;
+          res.status(status).send({
+            message:
+              status === 404
+                ? "No login account found for this user"
+                : error.message || "Password reset failed",
+          });
+        }
+      },
+    );
 
     // update user
     app.patch("/update-user", verifyToken, verifyAdmin, async (req, res) => {
@@ -660,6 +750,8 @@ async function run() {
                     remoteId: m.id,
                     clinicTimezone: clinic.timezone,
                     userId: m.userId,
+                    callDuration: m.meta?.call?.duration ?? null,
+                    callStatus: m.meta?.call?.status ?? null,
 
                     dateLocal: dayjs(m.dateAdded)
                       .tz(clinic.timezone)
@@ -1396,6 +1488,15 @@ async function run() {
 
       return rows;
     }
+
+    // Call Report + Appointment Report (filter by setter / staff)
+    registerReportRoutes({
+      app,
+      verifyToken,
+      usersCollection,
+      clinicCollection,
+      messagesCollection,
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
